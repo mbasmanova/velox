@@ -126,11 +126,131 @@ insert an entry, we compute a hash, extract tag and bucket number, go to the buc
 entry if there is space. If the bucket is full, we proceed to the next bucket and continue until we
 find a bucket with an empty slot. We insert the new entry there.
 
+Hash Modes
+----------
+
+The description above covers the default bucket-based hash table (kHash mode).
+Velox also supports two optimized modes that avoid per-entry hashing and
+bucket probing when the key values allow it. The hash table analyzes the key
+data during build and selects the best mode automatically.
+
+The three modes are:
+
+* **kArray** — Direct array lookup. Each key combination maps to an index in a
+  flat array. Lookup is O(1) with no hashing or probing. Used when the
+  combined key space is small enough to fit in an array.
+
+* **kNormalizedKey** — Bucket-based (same layout as kHash), but keys are
+  encoded into a single 64-bit normalized key stored alongside each row. Key
+  comparison uses this normalized key instead of comparing individual columns,
+  which is faster for multi-column keys.
+
+* **kHash** — Bucket-based with full key comparison. Used when keys cannot be
+  mapped to value IDs or normalized into 64 bits (e.g., complex types like
+  ARRAY, MAP, ROW).
+
+kArray Mode
+~~~~~~~~~~~
+
+In kArray mode, the bucket-based hash table is not used at all. Instead,
+``table_`` is a flat array of pointers indexed directly by a value ID computed
+from the key columns. Lookup is a single array access — no hashing, no tag
+comparison, no probing.
+
+VectorHasher tracks the range (min, max) and distinct values for each key
+column. Each column is assigned a *multiplier* so that multi-column keys
+produce a unique combined index:
+
+.. code-block:: text
+
+    index = valueId(col0) + valueId(col1) * multiplier1 + valueId(col2) * multiplier2 + ...
+
+The value ID for a column is computed either from its range (``value - min``)
+or by mapping distinct values to consecutive IDs (0, 1, 2, ...), depending on
+which approach is selected.
+
+Two approaches are tried:
+
+1. **Range-based**: each key column uses its value range (max - min + 1) as the
+   array dimension. The combined product of all column ranges must be < 2M.
+   For example, a single INT32 column with values 1..100 has range 100. Two
+   such columns would need 100 * 100 = 10'000 entries — well within 2M.
+
+2. **Distinct-value-based**: each key column maps its distinct values to
+   consecutive IDs (0, 1, 2, ...). The combined product of distinct counts
+   must be < 2M. This is used when ranges are too large but distinct counts
+   are small. For example, a column with values {1, 1'000'000} has range
+   1'000'000 (too large) but only 2 distinct values.
+
+Range-based is preferred when the range is within 20x of the distinct count
+(to avoid wasting array space on sparse ranges). Otherwise, distinct-value
+mapping is used.
+
+The array size is the product of all per-column dimensions (ranges or distinct
+counts), capped at ``kArrayHashMaxSize`` (2M entries = 16MB of pointer
+storage).
+
+**Supported types**: BOOLEAN, TINYINT, SMALLINT, INTEGER, BIGINT, VARCHAR,
+VARBINARY, TIMESTAMP. Types like REAL, DOUBLE, ARRAY, MAP, ROW do not support
+value ID tracking and cannot use kArray mode.
+
+kNormalizedKey Mode
+~~~~~~~~~~~~~~~~~~~
+
+When the combined key space exceeds 2M entries but can be encoded into a single
+64-bit integer, the table uses kNormalizedKey mode. This uses the same
+bucket-based layout as kHash, but stores a 64-bit *normalized key* immediately
+before each row in the RowContainer.
+
+The normalized key is computed using the same multiplier-based encoding as
+kArray mode:
+
+.. code-block:: text
+
+    normalizedKey = valueId(col0) + valueId(col1) * multiplier1 + ...
+
+During lookups, the normalized key is compared first — a single 64-bit integer
+comparison. If it doesn't match, the full per-column key comparison is skipped.
+This is particularly effective for multi-column keys where comparing individual
+columns would require multiple memory accesses and type-specific comparisons.
+
+kHash Mode
+~~~~~~~~~~
+
+This is the fallback mode used when:
+
+* Key types don't support value IDs (e.g., ARRAY, MAP, ROW, DOUBLE, REAL).
+* A single key column has more than 10'000 distinct values and the range
+  overflows (cannot use normalized keys).
+* Both the combined range and combined distinct count overflow 64 bits.
+
+In this mode, lookups compute a hash, probe buckets, compare tags, and then
+compare actual key values by following pointers to the RowContainer.
+
+Mode Selection
+~~~~~~~~~~~~~~
+
+The mode is selected by ``decideHashMode()`` using this priority:
+
+1. If combined ranges < 2M → **kArray** (range-based).
+2. If best combination of per-column ranges/distincts < 2M → **kArray**
+   (mixed).
+3. If combined ranges fit in 64 bits → **kNormalizedKey**.
+4. If single key column with > 10'000 distincts → **kHash** (normalized key
+   not worthwhile for a single wide column).
+5. If combined distincts < 2M → **kArray** (distinct-value-based).
+6. If both ranges and distincts overflow → **kHash**.
+7. Otherwise → **kNormalizedKey** (combined distincts fit in 64 bits).
+
+The selected mode is reported in the ``hashtable.hashMode`` runtime stat:
+0 for kHash, 1 for kArray, 2 for kNormalizedKey.
+
 Use Cases
 ---------
 
-The main use cases for the hash table are `Join <joins.html>`_ and
-`Aggregation <aggregations.html>`_ operators.
+The main use cases for the hash table are :doc:`Join <joins>` and
+:doc:`Aggregation <aggregations>` operators. It is also used by RowNumber,
+TopNRowNumber, and MarkDistinct operators.
 
 The HashBuild operator builds the hash table to store unique values of the join keys found on the build
 side of the join. The HashProbe operator looks up entries in the hash table using join keys from the
