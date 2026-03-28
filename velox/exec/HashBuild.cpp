@@ -413,6 +413,12 @@ void HashBuild::removeInputRowsForAntiJoinFilter() {
 }
 
 void HashBuild::addInput(RowVectorPtr input) {
+  if (joinNode_->isCountingJoin()) {
+    LOG(INFO) << "CountingJoin BUILD INPUT: " << toString()
+              << " driver=" << operatorCtx_->driverCtx()->driverId
+              << " " << input->toString() << "\n"
+              << input->toString(0, 100);
+  }
   checkRunning();
 
   VELOX_CHECK(
