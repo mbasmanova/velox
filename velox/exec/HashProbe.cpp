@@ -1181,13 +1181,6 @@ RowVectorPtr HashProbe::getOutputInternal(bool toSpillOutput) {
     }
     int numOut = 0;
 
-    if (isCountingJoin(joinType_)) {
-      LOG(INFO) << "CountingJoin PROBE INPUT: " << toString()
-                << " driver=" << operatorCtx_->driverCtx()->driverId
-                << " " << input_->toString() << "\n"
-                << input_->toString(0, 100);
-    }
-
     if (emptyBuildSide) {
       // When build side is empty, anti and left joins return all probe side
       // rows, including ones with null join keys.
@@ -1300,13 +1293,6 @@ RowVectorPtr HashProbe::getOutputInternal(bool toSpillOutput) {
     }
 
     fillOutput(numOut);
-
-    if (isCountingJoin(joinType_)) {
-      LOG(INFO) << "CountingJoin PROBE OUTPUT: " << toString()
-                << " driver=" << operatorCtx_->driverCtx()->driverId
-                << " " << output_->toString() << "\n"
-                << output_->toString(0, 100);
-    }
 
     if (isLeftSemiOrAntiJoinNoFilter || emptyBuildSide) {
       input_ = nullptr;

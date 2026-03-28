@@ -1426,6 +1426,8 @@ FOLLY_ALWAYS_INLINE void HashTable<ignoreNullKeys>::buildFullProbe(
               RowContainer::normalizedKey(inserted)) {
             if (nextOffset_ > 0) {
               pushNext(group, inserted);
+            } else if (rows_->countOffset() > 0) {
+              rows_->addCount(group, rows_->count(inserted));
             }
             return true;
           }
@@ -1443,6 +1445,8 @@ FOLLY_ALWAYS_INLINE void HashTable<ignoreNullKeys>::buildFullProbe(
           if (compareKeys(group, inserted)) {
             if (nextOffset_ > 0) {
               pushNext(group, inserted);
+            } else if (rows_->countOffset() > 0) {
+              rows_->addCount(group, rows_->count(inserted));
             }
             return true;
           }
