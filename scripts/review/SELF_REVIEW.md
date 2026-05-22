@@ -17,6 +17,17 @@ before review saves everyone time.
 - [ ] PR description matches what the code actually does. If the scope grew
       beyond the original description, update it. Do not include test
       results or pass/fail status — CI reports that.
+- [ ] For refactoring PRs, the description explains the before/after
+      component responsibilities — what existed before, what exists after,
+      and how they assemble. A diff that "extracts X" without explaining
+      the resulting design is not ready for review.
+- [ ] Bug fixes are not mixed with refactoring. If you find a bug while
+      refactoring, fix it in a separate PR.
+- [ ] When fixing a regression, CC the original author and reviewers of
+      the PR that introduced it.
+- [ ] When fixing a bug caused by a pattern (e.g., using regex to parse
+      escapes), audit other usages of the same pattern and note in the PR
+      whether they are safe.
 
 ## Naming
 
@@ -74,6 +85,9 @@ before review saves everyone time.
 - [ ] Error message assertions match the full descriptive text, not just
       the auto-generated comparison output from `VELOX_CHECK_*` macros.
 - [ ] Each test file has one test suite with a matching name.
+- [ ] Test comments describe what behavior the test verifies, not the bug
+      history or implementation details that led to writing the test. The
+      bug story belongs in the commit message and PR description.
 
 ## Documentation
 
